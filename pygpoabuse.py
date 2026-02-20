@@ -20,6 +20,7 @@ from pygpoabuse.linux_startup import LinuxStartupAbuse
 
 from pygpoabuse import logger
 from pygpoabuse.gpo import GPO
+from urllib.parse import quote
 
 parser = argparse.ArgumentParser(add_help=True, description="Add ScheduledTask to GPO")
 
@@ -28,6 +29,7 @@ parser.add_argument('-gpo-id', action='store', metavar='GPO_ID', help='GPO to up
 parser.add_argument('-user', action='store_true', help='Set user GPO (Default: False, Computer GPO)')
 parser.add_argument('-user-as-admin', action='store_true', help='Set user GPO but run as SYSTEM (Default: False, Computer GPO)')
 parser.add_argument('-taskname', action='store', help='Taskname to create. (Default: TASK_<random>)')
+parser.add_argument('-computername', action='store', help='Computer name to target in item-level targeting (NETBIOS Name)')
 parser.add_argument('-mod-date', action='store', help='Task modification date (Default: 30 days before)')
 parser.add_argument('-hashes', action="store", metavar = "LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
 parser.add_argument('-description', action='store', help='Task description (Default: Empty)')
@@ -102,7 +104,7 @@ if options.k:
         sys.exit(1)
     url = '{}+kerberos-ccache://{}\\{}:{}@{}/?dc={}'.format(protocol, domain, username, options.ccache, dc_ip, dc_ip)
 elif password != '':
-    url = '{}+ntlm-password://{}\\{}:{}@{}'.format(protocol, domain, username, password, dc_ip)
+    url = '{}+ntlm-password://{}\\{}:{}@{}'.format(protocol, domain, username, quote(password, safe=''), dc_ip)
     lmhash, nthash = "",""
 else:
     url = '{}+ntlm-nt://{}\\{}:{}@{}'.format(protocol, domain, username, options.hashes.split(":")[1], dc_ip)
@@ -178,6 +180,7 @@ try:
         powershell=options.powershell,
         command=options.command,
         gpo_type=("user-as-admin" if getattr(options, "user_as_admin", False) else ("user" if options.user else "computer")),
+        computername=options.computername,
         force=options.f
     )
     if task_name:
