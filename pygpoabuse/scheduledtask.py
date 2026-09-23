@@ -5,13 +5,15 @@ import re
 import uuid
 from base64 import b64encode
 from datetime import datetime, timedelta
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 import xml.etree.ElementTree as ET
 
 
 
 class ScheduledTask:
-    def __init__(self, gpo_type="computer", name="", mod_date="", description="", powershell=False, command="", old_value="", computername=""):
+    def __init__(self, gpo_type="computer", name="", mod_date="", description="", powershell=False, command="", old_value="", computername="", username="", usersid=""):
+        if bool(username) != bool(usersid):
+            raise ValueError('username and usersid must be supplied together')
         self._type = gpo_type
         if name:
             self._name = name
@@ -52,12 +54,23 @@ class ScheduledTask:
         elif self._type == "user-as-admin":
             self._task_str = f"""<ImmediateTaskV2 clsid="{{9756B581-76EC-4169-9AFC-0CA8D43ADB5F}}" name="{self._name}" image="0" changed="{self._mod_date}" uid="{{{self._guid}}}"><Properties action="C" name="{self._name}" runAs="NT AUTHORITY\\System" logonType="InteractiveToken"><Task version="1.3"><RegistrationInfo><Author>{self._author}</Author><Description>{self._description}</Description></RegistrationInfo><Principals><Principal id="Author"><UserId>NT AUTHORITY\\System</UserId><LogonType>S4U</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><IdleSettings><Duration>PT10M</Duration><WaitTimeout>PT1H</WaitTimeout><StopOnIdleEnd>true</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>true</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>P3D</ExecutionTimeLimit><Priority>7</Priority><DeleteExpiredTaskAfter>PT0S</DeleteExpiredTaskAfter></Settings><Triggers><TimeTrigger><StartBoundary>%LocalTimeXmlEx%</StartBoundary><EndBoundary>%LocalTimeXmlEx%</EndBoundary><Enabled>true</Enabled></TimeTrigger></Triggers><Actions Context="Author"><Exec><Command>{self._shell}</Command><Arguments>{self._command}</Arguments></Exec></Actions></Task></Properties>"""
         else:
-            self._task_str = f"""<ImmediateTaskV2 clsid="{{9756B581-76EC-4169-9AFC-0CA8D43ADB5F}}" name="{self._name}" image="0" changed="{self._mod_date}" uid="{{{self._guid}}}"><Properties action="C" name="{self._name}" runAs="%LogonDomain%\\%LogonUser%" logonType="InteractiveToken"><Task version="1.3"><RegistrationInfo><Author>{self._author}</Author><Description>{self._description}</Description></RegistrationInfo><Principals><Principal id="Author"><UserId>%LogonDomain%\\%LogonUser%</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><IdleSettings><Duration>PT10M</Duration><WaitTimeout>PT1H</WaitTimeout><StopOnIdleEnd>true</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>true</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>P3D</ExecutionTimeLimit><Priority>7</Priority><DeleteExpiredTaskAfter>PT0S</DeleteExpiredTaskAfter></Settings><Triggers><TimeTrigger><StartBoundary>%LocalTimeXmlEx%</StartBoundary><EndBoundary>%LocalTimeXmlEx%</EndBoundary><Enabled>true</Enabled></TimeTrigger></Triggers><Actions Context="Author"><Exec><Command>{self._shell}</Command><Arguments>{self._command}</Arguments></Exec></Actions></Task></Properties>"""
-        
-        if computername:
-            self._computername = computername
-            self._task_str += f"""<Filters><FilterComputer bool="AND" not="0" type="NETBIOS" name="{self._computername}"/></Filters>"""
-        self._task_str_end = f"""</ImmediateTaskV2></ScheduledTasks>"""
+            window_start = datetime.now().replace(microsecond=0)
+            window_end = window_start + timedelta(hours=24)
+            logon_trigger = (
+                f"<LogonTrigger><StartBoundary>{window_start.isoformat()}</StartBoundary>"
+                f"<EndBoundary>{window_end.isoformat()}</EndBoundary>"
+                "<Enabled>true</Enabled></LogonTrigger>"
+            )
+            self._task_str = f"""<TaskV2 clsid="{{D8896631-B747-47a7-84A6-C155337F3BC8}}" name="{self._name}" image="0" changed="{self._mod_date}" uid="{{{self._guid}}}"><Properties action="C" name="{self._name}" runAs="%LogonDomain%\\%LogonUser%" logonType="InteractiveToken"><Task version="1.3"><RegistrationInfo><Author>{self._author}</Author><Description>{self._description}</Description></RegistrationInfo><Principals><Principal id="Author"><UserId>%LogonDomain%\\%LogonUser%</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><IdleSettings><Duration>PT10M</Duration><WaitTimeout>PT1H</WaitTimeout><StopOnIdleEnd>true</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>true</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>P3D</ExecutionTimeLimit><Priority>7</Priority><DeleteExpiredTaskAfter>PT0S</DeleteExpiredTaskAfter></Settings><Triggers>{logon_trigger}</Triggers><Actions Context="Author"><Exec><Command>{self._shell}</Command><Arguments>{self._command}</Arguments></Exec></Actions></Task></Properties>"""
+
+        if username or computername:
+            self._task_str += "<Filters>"
+            if username:
+                self._task_str += f'<FilterUser bool="AND" not="0" name={quoteattr(username)} sid={quoteattr(usersid)}/>'
+            if computername:
+                self._task_str += f'<FilterComputer bool="AND" not="0" type="NETBIOS" name={quoteattr(computername)}/>'
+            self._task_str += "</Filters>"
+        self._task_str_end = "</TaskV2></ScheduledTasks>" if self._type == "user" else "</ImmediateTaskV2></ScheduledTasks>"
 
     def generate_scheduled_task_xml(self):
         if self._old_value == "":

